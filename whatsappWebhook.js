@@ -2,8 +2,20 @@ import { Router } from 'express';
 import { db, trialStatus } from './db.js';
 import { sendText, extractInboundText } from './whatsapp.js';
 import { runAgent } from './agent.js';
+import { generateUniqueId } from './uniqueId.js';
 
 export const whatsappWebhook = Router();
+
+// This deployment's WHATSAPP_PHONE_NUMBER_ID/TOKEN are one shared Meta app credential,
+// so (for now) one connected WhatsApp number serves one business — whichever one set
+// whatsapp_display_number, or the earliest-registered business as a fallback. True
+// per-business WhatsApp numbers would mean storing separate Meta credentials per business.
+function resolveActiveBusiness() {
+  return (
+    db.prepare('SELECT * FROM business WHERE whatsapp_display_number IS NOT NULL ORDER BY id LIMIT 1').get() ||
+    db.prepare('SELECT * FROM business ORDER BY id LIMIT 1').get()
+  );
+}
 
 // Meta calls this once when you register the webhook URL in the App Dashboard.
 whatsappWebhook.get('/', (req, res) => {
@@ -40,15 +52,19 @@ whatsappWebhook.post('/', async (req, res) => {
     const text = extractInboundText(message);
     if (!text) return;
 
-    const trial = trialStatus();
-    if (trial?.expired) {
+    const business = resolveActiveBusiness();
+    if (!business) return; // no business registered yet — nothing to route this message to
+
+    const trial = trialStatus(business);
+    if (trial?.expired && business.subscription_status !== 'active') {
       await sendText(from, 'This service is temporarily paused while the school renews its subscription. Please try again shortly.');
       return;
     }
 
-    let parent = db.prepare('SELECT * FROM parents WHERE whatsapp_number = ?').get(from);
+    let parent = db.prepare('SELECT * FROM parents WHERE whatsapp_number = ? AND business_id = ?').get(from, business.id);
     if (!parent) {
-      const info = db.prepare('INSERT INTO parents (whatsapp_number) VALUES (?)').run(from);
+      const info = db.prepare('INSERT INTO parents (business_id, whatsapp_number, unique_id) VALUES (?, ?, ?)')
+        .run(business.id, from, generateUniqueId());
       parent = db.prepare('SELECT * FROM parents WHERE id = ?').get(info.lastInsertRowid);
     }
 

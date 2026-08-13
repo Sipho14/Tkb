@@ -138,6 +138,22 @@ async function onAction(e) {
 }
 
 api('').then(render).catch(() => render(null));
+
+// Silently share live GPS position while the trip is active — powers the owner's
+// dashboard map. Doesn't block anything if the driver denies location permission.
+if ('geolocation' in navigator) {
+  navigator.geolocation.watchPosition(
+    (pos) => {
+      fetch('/api/driver/' + token + '/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+      }).catch(() => {});
+    },
+    () => {}, // ignore errors/denials — status updates still work without GPS
+    { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
+  );
+}
 </script>
 </body>
 </html>

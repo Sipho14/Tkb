@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { db, getBusiness } from './db.js';
+import { db, getBusinessById } from './db.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
@@ -13,7 +13,7 @@ export async function createPaymentLink({ parentId, studentId, amountCents, peri
     mode: 'payment',
     line_items: [{
       price_data: {
-        currency: 'usd',
+        currency: 'zar',
         unit_amount: amountCents,
         product_data: { name: `School transportation — ${periodLabel}` }
       },
@@ -30,20 +30,30 @@ export async function createPaymentLink({ parentId, studentId, amountCents, peri
   return { payment_url: session.url, payment_id: payment.lastInsertRowid };
 }
 
-// Called once the owner's 30-day trial ends: creates the recurring subscription checkout.
-export async function createOwnerSubscriptionCheckout() {
-  const business = getBusiness();
+// Called once a business's 30-day trial ends: creates their recurring subscription checkout,
+// priced according to the plan tier they signed up for.
+export async function createOwnerSubscriptionCheckout(businessId) {
+  const business = getBusinessById(businessId);
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer: business.stripe_customer_id || undefined,
-    line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+    line_items: [{
+      price_data: {
+        currency: 'zar',
+        unit_amount: business.price_cents,
+        recurring: { interval: 'month' },
+        product_data: { name: `Scholar Transit — ${business.plan_tier} plan` }
+      },
+      quantity: 1
+    }],
     success_url: `${process.env.APP_URL}/billing/success`,
-    cancel_url: `${process.env.APP_URL}/billing/cancel`
+    cancel_url: `${process.env.APP_URL}/billing/cancel`,
+    metadata: { business_id: String(businessId) }
   });
   return session.url;
 }
 
-// Stripe webhook handler — call from routes/stripeWebhook.js with the raw request body.
+// Stripe webhook handler — call from stripeWebhook.js with the raw request body.
 export function handleStripeEvent(event) {
   switch (event.type) {
     case 'checkout.session.completed': {
@@ -52,19 +62,28 @@ export function handleStripeEvent(event) {
         db.prepare("UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ?")
           .run(session.metadata.payment_id);
       }
-      if (session.mode === 'subscription') {
-        db.prepare("UPDATE business SET subscription_status = 'active', stripe_subscription_id = ?, stripe_customer_id = ? WHERE id = 1")
-          .run(session.subscription, session.customer);
+      if (session.mode === 'subscription' && session.metadata?.business_id) {
+        db.prepare("UPDATE business SET subscription_status = 'active', stripe_subscription_id = ?, stripe_customer_id = ? WHERE id = ?")
+          .run(session.subscription, session.customer, session.metadata.business_id);
       }
       break;
     }
     case 'invoice.payment_failed': {
-      db.prepare("UPDATE business SET subscription_status = 'past_due' WHERE id = 1").run();
-      db.prepare("INSERT INTO alerts (type, message) VALUES ('payment_failed', 'Subscription payment failed — update billing details.')").run();
+      const customerId = event.data.object.customer;
+      const business = db.prepare('SELECT * FROM business WHERE stripe_customer_id = ?').get(customerId);
+      if (business) {
+        db.prepare("UPDATE business SET subscription_status = 'past_due' WHERE id = ?").run(business.id);
+        db.prepare("INSERT INTO alerts (business_id, type, message) VALUES (?, 'payment_failed', 'Subscription payment failed — update billing details.')")
+          .run(business.id);
+      }
       break;
     }
     case 'customer.subscription.deleted': {
-      db.prepare("UPDATE business SET subscription_status = 'canceled' WHERE id = 1").run();
+      const customerId = event.data.object.customer;
+      const business = db.prepare('SELECT * FROM business WHERE stripe_customer_id = ?').get(customerId);
+      if (business) {
+        db.prepare("UPDATE business SET subscription_status = 'canceled' WHERE id = ?").run(business.id);
+      }
       break;
     }
   }

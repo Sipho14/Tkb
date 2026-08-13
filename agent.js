@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { db, getBusiness } from './db.js';
+import { db } from './db.js';
 import { createPaymentLink } from './billing.js';
 import { addStopForBooking } from './logistics.js';
 

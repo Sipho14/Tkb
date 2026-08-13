@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { db } from './db.js';
 import { getTripWithStops, updateStopStatus } from './logistics.js';
 
 export const driverRouter = Router();
@@ -23,4 +24,18 @@ driverRouter.post('/:token/stops/:stopId', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// Driver's phone pings this every ~20-30s while the trip is active, so the owner's
+// dashboard map can show a live-moving marker.
+driverRouter.post('/:token/location', (req, res) => {
+  const data = getTripWithStops(req.params.token, true);
+  if (!data) return res.status(404).json({ error: 'Trip link not found or expired.' });
+
+  const { lat, lng } = req.body;
+  if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'lat/lng required' });
+
+  db.prepare("UPDATE trips SET current_lat = ?, current_lng = ?, location_updated_at = datetime('now') WHERE id = ?")
+    .run(lat, lng, data.trip.id);
+  res.json({ ok: true });
 });
