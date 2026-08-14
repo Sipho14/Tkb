@@ -67,7 +67,10 @@ authRouter.post('/register', async (req, res) => {
     console.error('Failed to send verification email:', err.message);
   }
 
-  res.json({ ok: true, businessId: result.lastInsertRowid, plan: tier });
+  // Email isn't configured yet — hand the code back directly so testing isn't blocked.
+  // This field simply won't be present once RESEND_API_KEY is set and real email works.
+  const devCode = process.env.RESEND_API_KEY ? undefined : code;
+  res.json({ ok: true, businessId: result.lastInsertRowid, plan: tier, devCode });
 });
 
 authRouter.post('/verify', (req, res) => {
@@ -97,7 +100,8 @@ authRouter.post('/resend-code', async (req, res) => {
   const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
   db.prepare('UPDATE business SET verification_code = ?, verification_expires = ? WHERE id = ?').run(code, expires, business.id);
   await sendEmail(email, 'Your new Scholar Transit code', verificationEmailHtml(code, business.contact_name));
-  res.json({ ok: true });
+  const devCode = process.env.RESEND_API_KEY ? undefined : code;
+  res.json({ ok: true, devCode });
 });
 
 authRouter.post('/login', (req, res) => {
