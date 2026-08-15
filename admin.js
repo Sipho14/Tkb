@@ -109,7 +109,7 @@ adminRouter.get('/live-locations', (req, res) => {
 adminRouter.get('/drivers', (req, res) => {
   res.json(db.prepare(`
     SELECT d.*, v.plate_number, v.model FROM drivers d LEFT JOIN vehicles v ON v.id = d.vehicle_id
-    WHERE d.business_id = ? ORDER BY d.created_at DESC`).all(req.auth.businessId));
+    WHERE d.business_id = ? AND d.active = 1 ORDER BY d.created_at DESC`).all(req.auth.businessId));
 });
 adminRouter.post('/drivers', (req, res) => {
   const { name, phone, license_number, vehicle_id } = req.body;
@@ -117,13 +117,30 @@ adminRouter.post('/drivers', (req, res) => {
     .run(req.auth.businessId, name, phone, license_number, vehicle_id || null);
   res.json({ id: result.lastInsertRowid });
 });
+adminRouter.delete('/drivers/:id', (req, res) => {
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ? AND business_id = ?').get(req.params.id, req.auth.businessId);
+  if (!driver) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE drivers SET active = 0 WHERE id = ?').run(driver.id);
+  db.prepare('UPDATE routes SET driver_id = NULL WHERE driver_id = ?').run(driver.id);
+  db.prepare('UPDATE staff SET driver_record_id = NULL WHERE driver_record_id = ?').run(driver.id);
+  res.json({ ok: true });
+});
 
-adminRouter.get('/vehicles', (req, res) => res.json(db.prepare('SELECT * FROM vehicles WHERE business_id = ? ORDER BY created_at DESC').all(req.auth.businessId)));
+adminRouter.get('/vehicles', (req, res) =>
+  res.json(db.prepare('SELECT * FROM vehicles WHERE business_id = ? AND active = 1 ORDER BY created_at DESC').all(req.auth.businessId)));
 adminRouter.post('/vehicles', (req, res) => {
   const { plate_number, model, capacity } = req.body;
   const result = db.prepare('INSERT INTO vehicles (business_id, plate_number, model, capacity) VALUES (?, ?, ?, ?)')
     .run(req.auth.businessId, plate_number, model, capacity);
   res.json({ id: result.lastInsertRowid });
+});
+adminRouter.delete('/vehicles/:id', (req, res) => {
+  const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ? AND business_id = ?').get(req.params.id, req.auth.businessId);
+  if (!vehicle) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE vehicles SET active = 0 WHERE id = ?').run(vehicle.id);
+  db.prepare('UPDATE drivers SET vehicle_id = NULL WHERE vehicle_id = ?').run(vehicle.id);
+  db.prepare('UPDATE staff SET assigned_vehicle_id = NULL WHERE assigned_vehicle_id = ?').run(vehicle.id);
+  res.json({ ok: true });
 });
 
 // ---- Routes ----
