@@ -61,15 +61,12 @@ authRouter.post('/register', async (req, res) => {
     code, expires
   );
 
-  try {
-    await sendEmail(email, 'Confirm your Scholar Transit account', verificationEmailHtml(code, contactName));
-  } catch (err) {
-    console.error('Failed to send verification email:', err.message);
-  }
+  const emailResult = await sendEmail(email, 'Confirm your Scholar Transit account', verificationEmailHtml(code, contactName));
 
-  // Email isn't configured yet — hand the code back directly so testing isn't blocked.
-  // This field simply won't be present once RESEND_API_KEY is set and real email works.
-  const devCode = process.env.RESEND_API_KEY ? undefined : code;
+  // Only hide the code if it actually reached their inbox. Resend's sandbox mode silently
+  // rejects anyone but your own verified address until a sending domain is added — so
+  // showing the code here is what keeps other testers from being locked out entirely.
+  const devCode = emailResult.sent ? undefined : code;
   res.json({ ok: true, businessId: result.lastInsertRowid, plan: tier, devCode });
 });
 
