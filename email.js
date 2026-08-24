@@ -1,38 +1,47 @@
-// Sends transactional email via Resend (resend.com). Works out of the box with the
-// 'onboarding@resend.dev' test sender — no domain verification needed to get started;
-// swap EMAIL_FROM to a verified domain address once you have one.
+// Sends transactional email via Gmail SMTP — works with any regular Gmail account,
+// no domain or business verification needed. Replaces the Resend version, which
+// requires a verified domain to email anyone besides the account owner.
+//
+// SETUP REQUIRED (one-time, in your Gmail account):
+// 1. Go to myaccount.google.com/security, turn on "2-Step Verification"
+// 2. Go to myaccount.google.com/apppasswords, create an app password
+// 3. In Railway, set two environment variables:
+//      GMAIL_USER = digitalserve6@gmail.com   (the Gmail address sending the emails)
+//      GMAIL_APP_PASSWORD = the 16-character app password from step 2
 
-export async function sendEmail(to, subject, html) {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn('RESEND_API_KEY not set — skipping email send. Would have sent:', { to, subject });
+import nodemailer from 'nodemailer';
+
+let transporter = null;
+
+function getTransporter() {
+  if (transporter) return transporter;
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) return null;
+
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD
+    }
+  });
+  return transporter;
+}export async function sendEmail(to, subject, html) {
+  const t = getTransporter();
+  if (!t) {
+    console.warn('GMAIL_USER / GMAIL_APP_PASSWORD not set — skipping email send. Would have sent:', { to, subject });
     return { sent: false, reason: 'not_configured' };
   }
 
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: process.env.EMAIL_FROM || 'Scholar Transit <onboarding@resend.dev>',
-        to,
-        subject,
-        html
-      })
+    const info = await t.sendMail({
+      from: `Traveling Kids <${process.env.GMAIL_USER}>`,
+      to,
+      subject,
+      html
     });
-
-    const data = await res.json();
-    if (!res.ok) {
-      // Never throw from here — a failed email must never crash the request that
-      // triggered it (registration, resend, etc). Log it, report it, move on.
-      console.error('Resend email error:', JSON.stringify(data));
-      return { sent: false, reason: data?.message || 'send_failed' };
-    }
-    return { sent: true, id: data.id };
+    return { sent: true, id: info.messageId };
   } catch (err) {
-    console.error('Resend request failed:', err.message);
+    console.error('Gmail send failed:', err.message);
     return { sent: false, reason: err.message };
   }
 }
@@ -41,7 +50,7 @@ export function verificationEmailHtml(code, businessName) {
   return `
     <div style="font-family: -apple-system, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
       <div style="background: #16233F; color: white; padding: 24px; border-radius: 16px 16px 0 0;">
-        <h1 style="margin: 0; font-size: 20px;">Scholar Transit</h1>
+        <h1 style="margin: 0; font-size: 20px;">Traveling Kids</h1>
       </div>
       <div style="background: #F7F4EC; padding: 32px 24px; border-radius: 0 0 16px 16px;">
         <p>Hi${businessName ? ` ${businessName}` : ''},</p>
@@ -49,8 +58,8 @@ export function verificationEmailHtml(code, businessName) {
         <div style="background: white; border: 1px solid #E4E0D4; border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0;">
           <span style="font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #16233F;">${code}</span>
         </div>
-        <p style="color: #65708A; font-size: 13px;">This code expires in 15 minutes. If you didn't sign up for Scholar Transit, you can ignore this email.</p>
+        <p style="color: #65708A; font-size: 13px;">This code expires in 15 minutes. If you didn't sign up for Traveling Kids, you can ignore this email.</p>
       </div>
     </div>
   `;
-}
+  }
